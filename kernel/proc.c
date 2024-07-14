@@ -274,7 +274,8 @@ fork(void)
     return -1;
   }
   np->sz = p->sz;
-
+  // copy trace mask
+  np->mask = p->mask;
   np->parent = p;
 
   // copy saved user registers.
