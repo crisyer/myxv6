@@ -109,7 +109,7 @@ bget(uint dev, uint blockno)
   // 2.2 find a LRU block from current bucket.
   for (b = bcache.head[i].next; b != &bcache.head[i]; b = b->next) {
     if (b->refcnt == 0 && (b2 == 0 || b->lastuse < min_ticks)) { // 如果块闲置,或者块使用频率最小
-      min_ticks = b->lastuse; // 获取最小use的块,就是用的最少的块
+      min_ticks = b->lastuse;  // 获取最小use的块,就是用的最少的块
       b2 = b;
     }
   }
