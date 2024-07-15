@@ -15,6 +15,9 @@ extern char etext[];  // kernel.ld sets this to end of kernel code.
 
 extern char trampoline[]; // trampoline.S
 
+extern uint page_ref[]; // kalloc.c
+//extern struct spinlock ref_lock; // kalloc.c
+
 /*
  * create a direct-map page table for the kernel.
  */
@@ -68,6 +71,10 @@ kvminithart()
 //   21..29 -- 9 bits of level-1 index.
 //   12..20 -- 9 bits of level-0 index.
 //    0..11 -- 12 bits of byte offset within the page.
+// 对于每一级，它检查对应的页表条目（pte）是否有效（PTE_V位是否设置）。
+//如果有效，它通过页表条目中的物理地址字段转换得到下一级页表的物理地址，并将其转换为页表基址。
+//如果无效并且允许分配（alloc为真），它将尝试分配一个新的页表（kalloc()），
+//并将新页表的物理地址封装在页表条目中，同时设置PTE_V位以标记页表有效。
 pte_t *
 walk(pagetable_t pagetable, uint64 va, int alloc)
 {
@@ -311,7 +318,6 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
   pte_t *pte;
   uint64 pa, i;
   uint flags;
-  char *mem;
 
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walk(old, i, 0)) == 0)
@@ -319,14 +325,12 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
     if((*pte & PTE_V) == 0)
       panic("uvmcopy: page not present");
     pa = PTE2PA(*pte);
+    *pte = (*pte & ~PTE_W) | PTE_COW;
     flags = PTE_FLAGS(*pte);
-    if((mem = kalloc()) == 0)
-      goto err;
-    memmove(mem, (char*)pa, PGSIZE);
-    if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0){
-      kfree(mem);
+    if(mappages(new, i, PGSIZE, pa, flags) != 0){
       goto err;
     }
+    page_ref[COW_INDEX(pa)]++;
   }
   return 0;
 
@@ -355,15 +359,21 @@ int
 copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 {
   uint64 n, va0, pa0;
+  pte_t *pte;
 
   while(len > 0){
     va0 = PGROUNDDOWN(dstva);
+    if (cow_alloc(pagetable, va0) != 0)
+      return -1;
     pa0 = walkaddr(pagetable, va0);
     if(pa0 == 0)
       return -1;
     n = PGSIZE - (dstva - va0);
     if(n > len)
       n = len;
+    pte = walk(pagetable, va0, 0);
+    if(pte == 0)
+      return -1;
     memmove((void *)(pa0 + (dstva - va0)), src, n);
 
     len -= n;
